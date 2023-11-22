@@ -48,8 +48,8 @@ build:
     - "xformers>=0.0.20"
     - "git+https://github.com/Stability-AI/generative-models.git"
 
-  # run:
-  #   - "echo env is ready!"
+  run:
+    - curl -o /usr/local/bin/pget -L "https://github.com/replicate/pget/releases/download/v0.0.6/pget" && chmod +x /usr/local/bin/pget
 
 # predict.py defines how predictions are run on your model
 predict: "predict.py:Predictor"
