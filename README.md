@@ -14,7 +14,7 @@ First download the checkpoint:
 
 Then run aprediction:
 
-    cog predict -i prompt="a photo of TOK"
+    cog predict -i input_image=@demo.png
 
 ## Output
 

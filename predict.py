@@ -84,10 +84,13 @@ def load_model(
     )
     if device == "cuda":
         with torch.device(device):
-            model = instantiate_from_config(config.model).to(device).eval()
+            model = instantiate_from_config(config.model).to(device)
     else:
-        model = instantiate_from_config(config.model).to(device).eval()
+        model = instantiate_from_config(config.model).to(device)
 
+    # FP16
+    model.model.half()
+    model.eval()
     return model
 
 
@@ -125,9 +128,9 @@ class Predictor(BasePredictor):
         ),
         num_frames: int = Input(default=14, ge=5, le=30),
         num_steps: int = Input(default=25, ge=5, le=50),
-        fps_id: int = Input(description="Frames per second", default=6, ge=5, le=30),
+        frames_per_second: int = Input(description="Frames per second", default=6, ge=5, le=30),
         motion_bucket_id: int = Input(
-            description="Motion bucket id", default=127, ge=1, le=255
+            description="Increase overall motion in the generated video", default=127, ge=1, le=255
         ),
         cond_aug: float = Input(description="conditional aug", default=0.02),
         decoding_t: int = Input(description="decoding t", default=14),
@@ -186,15 +189,15 @@ class Predictor(BasePredictor):
                 "WARNING: High motion bucket! This may lead to suboptimal performance."
             )
 
-        if fps_id < 5:
+        if frames_per_second < 5:
             print("WARNING: Small fps value! This may lead to suboptimal performance.")
 
-        if fps_id > 30:
+        if frames_per_second > 30:
             print("WARNING: Large fps value! This may lead to suboptimal performance.")
 
         value_dict = {}
         value_dict["motion_bucket_id"] = motion_bucket_id
-        value_dict["fps_id"] = fps_id
+        value_dict["fps_id"] = frames_per_second
         value_dict["cond_aug"] = cond_aug
         value_dict["cond_frames_without_noise"] = image
         value_dict["cond_frames"] = image + cond_aug * torch.randn_like(image)
@@ -263,7 +266,7 @@ class Predictor(BasePredictor):
 
                 # Use ffmpeg to create video from images
                 os.system(
-                    f"ffmpeg -r {fps_id + 1} -i {output_folder}/frame_%06d.png -c:v libx264 -vf 'fps={fps_id + 1},format=yuv420p' {video_path}"
+                    f"ffmpeg -r {frames_per_second + 1} -i {output_folder}/frame_%06d.png -c:v libx264 -vf 'fps={frames_per_second + 1},format=yuv420p' {video_path}"
                 )
 
                 # Remove individual frame images
