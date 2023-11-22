@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+
+import os
+import torch
+
+MODEL_CACHE = "checkpoints"
+
+if not os.path.exists(MODEL_CACHE):
+    os.makedirs(MODEL_CACHE)
+
+os.system("cd checkpoints && wget https://huggingface.co/stabilityai/stable-video-diffusion-img2vid/resolve/main/svd.safetensors")
