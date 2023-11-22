@@ -94,6 +94,11 @@ def load_model(
 SVD_MODEL_CACHE = "./checkpoints"
 SVD_URL = "https://weights.replicate.delivery/default/svd/svd_and_svd_xt.tar"
 
+SVD_DEFAULT_FRAMES = 14
+SVD_DEFAULT_STEPS = 25
+
+SVD_XT_DEFAULT_FRAMES = 25
+SVD_XT_DEFAULT_STEPS = 30
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
@@ -101,11 +106,18 @@ class Predictor(BasePredictor):
         self.sizing_strategy = SizingStrategy()
         WeightsDownloader.download_if_not_exists(SVD_URL, SVD_MODEL_CACHE)
 
-        self.model = load_model(
+        self.svd_model = load_model(
             "svd.yaml",
             "cuda",
-            14,
-            25,
+            SVD_DEFAULT_FRAMES,
+            SVD_DEFAULT_STEPS,
+        )
+
+        self.svd_xt_model = load_model(
+            "svd_xt.yaml",
+            "cuda",
+            SVD_XT_DEFAULT_FRAMES,
+            SVD_XT_DEFAULT_STEPS,
         )
 
         # self.model = torch.load("./weights.pth")
@@ -114,6 +126,14 @@ class Predictor(BasePredictor):
     def predict(
         self,
         input_image: Path = Input(description="Input image"),
+        video_length: str = Input(
+            description="Use svd or svd_xt",
+            choices=[
+                "14_frames_with_svd",
+                "25_frames_with_svd_xt",
+            ],
+            default="14_frames_with_svd",
+        ),
         sizing_strategy: str = Input(
             description="Decide how to resize the input image",
             choices=[
@@ -123,8 +143,6 @@ class Predictor(BasePredictor):
             ],
             default="maintain_aspect_ratio",
         ),
-        num_frames: int = Input(default=14, ge=5, le=30),
-        num_steps: int = Input(default=25, ge=5, le=50),
         fps_id: int = Input(description="Frames per second", default=6, ge=5, le=30),
         motion_bucket_id: int = Input(
             description="Motion bucket id", default=127, ge=1, le=255
@@ -149,17 +167,13 @@ class Predictor(BasePredictor):
         image = self.sizing_strategy.apply(sizing_strategy, input_image)
 
         device = "cuda"
-        print("Set consts")
 
-        if num_frames != 14 or num_steps != 25:
-            model = load_model(
-                "svd.yaml",
-                "cuda",
-                num_frames,
-                num_steps,
-            )
+        if video_length == "14_frames_with_svd":
+            model = self.svd_model
+            num_frames = SVD_DEFAULT_FRAMES
         else:
-            model = self.model
+            model = self.svd_xt_model
+            num_frames = SVD_XT_DEFAULT_FRAMES
 
         print("Loaded model")
         torch.manual_seed(seed)
