@@ -7,7 +7,6 @@ import cv2
 import math
 import torch
 import numpy as np
-from fire import Fire
 from PIL import Image
 from glob import glob
 from typing import Optional
@@ -90,10 +89,19 @@ class Predictor(BasePredictor):
     def setup(self) -> None:
         """Load the model into memory to make running multiple predictions efficient"""
         # self.model = torch.load("./weights.pth")
+        # TODO: cache & download open_clip_pytorch_model.bin here
 
     def predict(
         self,
         input_image: Path = Input(description="Input image"),
+        num_frames: int = Input(
+            description="Frames per second",
+            default=14, ge=5, le=30
+        ),
+        num_steps: int = Input(
+            description="Frames per second",
+            default=25, ge=5, le=50
+        ),
         fps_id: int = Input(
             description="Frames per second",
             default=6, ge=5, le=30
@@ -119,16 +127,10 @@ class Predictor(BasePredictor):
             seed = int.from_bytes(os.urandom(2), "big")
         print(f"Using seed: {seed}")
 
-        num_frames: Optional[int] = 14
-        num_steps: Optional[int] = 25
-        # fps_id: int = 6
-        # motion_bucket_id: int = 127
-        # cond_aug: float = 0.02
-        # seed: int = 23
-        # decoding_t: int = 14
         device = "cuda"
         output_folder: Optional[str] = "output/"
         model_config = "svd.yaml"
+        print("Set consts")
 
         model = load_model(
             model_config,
@@ -136,6 +138,7 @@ class Predictor(BasePredictor):
             num_frames,
             num_steps,
         )
+        print("Loaded model")
         torch.manual_seed(seed)
 
         input_img_path = input_image
@@ -145,6 +148,7 @@ class Predictor(BasePredictor):
                 image = image.convert("RGB")
             w, h = image.size
 
+            # Resize img to %64
             if h % 64 != 0 or w % 64 != 0:
                 width, height = map(lambda x: x - x % 64, (w, h))
                 image = image.resize((width, height))
@@ -244,7 +248,7 @@ class Predictor(BasePredictor):
                     cv2.imwrite(os.path.join(output_folder, f"frame_{i:06d}.png"), frame)
 
                 # Use ffmpeg to create video from images
-                os.system(f"ffmpeg -r {fps_id + 1} -i {output_folder}/frame_%06d.png -vcodec mpeg4 {video_path}")
+                os.system(f"ffmpeg -r {fps_id + 1} -i {output_folder}/frame_%06d.png {video_path}")
 
                 # Remove individual frame images
                 for file_name in glob(os.path.join(output_folder, "*.png")):
