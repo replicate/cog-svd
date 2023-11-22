@@ -90,8 +90,10 @@ def load_model(
 
     return model
 
+
 SVD_MODEL_CACHE = "./checkpoints"
 SVD_URL = "https://weights.replicate.delivery/default/svd/svd_and_svd_xt.tar"
+
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
@@ -115,10 +117,11 @@ class Predictor(BasePredictor):
         sizing_strategy: str = Input(
             description="Decide how to resize the input image",
             choices=[
+                "maintain_aspect_ratio",
+                "crop_to_16_9",
                 "use_image_dimensions",
-                "max_width_1024",
             ],
-            default="use_image_dimensions",
+            default="maintain_aspect_ratio",
         ),
         num_frames: int = Input(default=14, ge=5, le=30),
         num_steps: int = Input(default=25, ge=5, le=50),
@@ -143,9 +146,7 @@ class Predictor(BasePredictor):
             seed = int.from_bytes(os.urandom(2), "big")
         print(f"Using seed: {seed}")
 
-        _width, _height, image = self.sizing_strategy.apply(
-            sizing_strategy, input_image
-        )
+        image = self.sizing_strategy.apply(sizing_strategy, input_image)
 
         device = "cuda"
         print("Set consts")
@@ -262,7 +263,7 @@ class Predictor(BasePredictor):
 
                 # Use ffmpeg to create video from images
                 os.system(
-                    f"ffmpeg -r {fps_id + 1} -i {output_folder}/frame_%06d.png {video_path}"
+                    f"ffmpeg -r {fps_id + 1} -i {output_folder}/frame_%06d.png -c:v libx264 -vf 'fps={fps_id + 1},format=yuv420p' {video_path}"
                 )
 
                 # Remove individual frame images
