@@ -122,7 +122,6 @@ class Predictor(BasePredictor):
             SVD_XT_DEFAULT_FRAMES,
             SVD_XT_DEFAULT_STEPS,
         )
-
         # self.model = torch.load("./weights.pth")
         # TODO: cache & download open_clip_pytorch_model.bin here
 
@@ -130,7 +129,7 @@ class Predictor(BasePredictor):
         self,
         input_image: Path = Input(description="Input image"),
         video_length: str = Input(
-            description="Use svd or svd_xt",
+            description="Use svd to generate 14 frames or svd_xt for 25 frames",
             choices=[
                 "14_frames_with_svd",
                 "25_frames_with_svd_xt",
@@ -150,7 +149,7 @@ class Predictor(BasePredictor):
         motion_bucket_id: int = Input(
             description="Increase overall motion in the generated video", default=127, ge=1, le=255
         ),
-        cond_aug: float = Input(description="conditional aug", default=0.02),
+        cond_aug: float = Input(description="Amount of noise to add to input image", default=0.02),
         decoding_t: int = Input(description="Number of frames to decode at a time", default=7),
         seed: int = Input(
             description="Random seed. Leave blank to randomize the seed", default=None
