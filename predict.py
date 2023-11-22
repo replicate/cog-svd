@@ -15,10 +15,14 @@ from einops import rearrange, repeat
 from torchvision.transforms import ToTensor
 from sgm.inference.helpers import embed_watermark
 from sgm.util import default, instantiate_from_config
+from sizing_strategy import SizingStrategy
 
 """Exported from stability/ai generative-models """
+
+
 def get_unique_embedder_keys_from_conditioner(conditioner):
     return list(set([x.input_key for x in conditioner.embedders]))
+
 
 def get_batch(keys, value_dict, N, T, device):
     batch = {}
@@ -60,6 +64,7 @@ def get_batch(keys, value_dict, N, T, device):
             batch_uc[key] = torch.clone(batch[key])
     return batch, batch_uc
 
+
 def load_model(
     config: str,
     device: str,
@@ -88,47 +93,49 @@ def load_model(
 class Predictor(BasePredictor):
     def setup(self) -> None:
         """Load the model into memory to make running multiple predictions efficient"""
+        self.sizing_strategy = SizingStrategy()
         # self.model = torch.load("./weights.pth")
         # TODO: cache & download open_clip_pytorch_model.bin here
 
     def predict(
         self,
         input_image: Path = Input(description="Input image"),
-        num_frames: int = Input(
-            description="Frames per second",
-            default=14, ge=5, le=30
+        sizing_strategy: str = Input(
+            description="Decide how to resize the input image",
+            choices=[
+                "use_image_dimensions",
+                "max_width_1024",
+            ],
+            default="use_image_dimensions",
         ),
-        num_steps: int = Input(
-            description="Frames per second",
-            default=25, ge=5, le=50
-        ),
-        fps_id: int = Input(
-            description="Frames per second",
-            default=6, ge=5, le=30
-        ),
+        num_frames: int = Input(default=14, ge=5, le=30),
+        num_steps: int = Input(default=25, ge=5, le=50),
+        fps_id: int = Input(description="Frames per second", default=6, ge=5, le=30),
         motion_bucket_id: int = Input(
-            description="Motion bucket id",
-            default=127, ge=1, le=255
+            description="Motion bucket id", default=127, ge=1, le=255
         ),
-        cond_aug: float = Input(
-            description="conditional aug",
-            default=0.02
-        ),
-        decoding_t: int = Input(
-            description="decoding t",
-            default=14
-        ),
+        cond_aug: float = Input(description="conditional aug", default=0.02),
+        decoding_t: int = Input(description="decoding t", default=14),
         seed: int = Input(
             description="Random seed. Leave blank to randomize the seed", default=None
         ),
     ) -> Path:
         """Run a single prediction on the model"""
+
+        # Remove individual frame images
+        output_folder: Optional[str] = "output/"
+        for file_name in glob(os.path.join(output_folder, "*.png")):
+            os.remove(file_name)
+
         if seed is None:
             seed = int.from_bytes(os.urandom(2), "big")
         print(f"Using seed: {seed}")
 
+        _width, _height, image = self.sizing_strategy.apply(
+            sizing_strategy, input_image
+        )
+
         device = "cuda"
-        output_folder: Optional[str] = "output/"
         model_config = "svd.yaml"
         print("Set consts")
 
@@ -141,23 +148,12 @@ class Predictor(BasePredictor):
         print("Loaded model")
         torch.manual_seed(seed)
 
-        input_img_path = input_image
         output_path = None
-        with Image.open(input_img_path) as image:
-            if image.mode == "RGBA":
-                image = image.convert("RGB")
-            w, h = image.size
 
-            # Resize img to %64
-            if h % 64 != 0 or w % 64 != 0:
-                width, height = map(lambda x: x - x % 64, (w, h))
-                image = image.resize((width, height))
-                print(
-                    f"WARNING: Your image is of size {h}x{w} which is not divisible by 64. We are resizing to {height}x{width}!"
-                )
-
-            image = ToTensor()(image)
-            image = image * 2.0 - 1.0
+        if image.mode == "RGBA":
+            image = image.convert("RGB")
+        image = ToTensor()(image)
+        image = image * 2.0 - 1.0
 
         image = image.unsqueeze(0).to(device)
         H, W = image.shape[2:]
@@ -245,10 +241,14 @@ class Predictor(BasePredictor):
                 # Save frames as individual images
                 for i, frame in enumerate(vid):
                     frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    cv2.imwrite(os.path.join(output_folder, f"frame_{i:06d}.png"), frame)
+                    cv2.imwrite(
+                        os.path.join(output_folder, f"frame_{i:06d}.png"), frame
+                    )
 
                 # Use ffmpeg to create video from images
-                os.system(f"ffmpeg -r {fps_id + 1} -i {output_folder}/frame_%06d.png {video_path}")
+                os.system(
+                    f"ffmpeg -r {fps_id + 1} -i {output_folder}/frame_%06d.png {video_path}"
+                )
 
                 # Remove individual frame images
                 for file_name in glob(os.path.join(output_folder, "*.png")):
