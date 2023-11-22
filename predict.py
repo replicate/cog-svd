@@ -94,16 +94,39 @@ class Predictor(BasePredictor):
     def predict(
         self,
         input_image: Path = Input(description="Input image"),
+        fps_id: int = Input(
+            description="Frames per second",
+            default=6, ge=5, le=30
+        ),
+        motion_bucket_id: int = Input(
+            description="Motion bucket id",
+            default=127, ge=1, le=255
+        ),
+        cond_aug: float = Input(
+            description="conditional aug",
+            default=0.02
+        ),
+        decoding_t: int = Input(
+            description="decoding t",
+            default=14
+        ),
+        seed: int = Input(
+            description="Random seed. Leave blank to randomize the seed", default=None
+        ),
     ) -> Path:
         """Run a single prediction on the model"""
+        if seed is None:
+            seed = int.from_bytes(os.urandom(2), "big")
+        print(f"Using seed: {seed}")
+
         num_frames: Optional[int] = 14
         num_steps: Optional[int] = 25
-        fps_id: int = 6
-        motion_bucket_id: int = 127
-        cond_aug: float = 0.02
-        seed: int = 23
-        decoding_t: int = 14
-        device: str = "cuda"
+        # fps_id: int = 6
+        # motion_bucket_id: int = 127
+        # cond_aug: float = 0.02
+        # seed: int = 23
+        # decoding_t: int = 14
+        device = "cuda"
         output_folder: Optional[str] = "output/"
         model_config = "svd.yaml"
 
@@ -206,12 +229,6 @@ class Predictor(BasePredictor):
                 os.makedirs(output_folder, exist_ok=True)
                 base_count = len(glob(os.path.join(output_folder, "*.mp4")))
                 video_path = os.path.join(output_folder, f"{base_count:06d}.mp4")
-                writer = cv2.VideoWriter(
-                    video_path,
-                    cv2.VideoWriter_fourcc(*"MP4V"),
-                    fps_id + 1,
-                    (samples.shape[-1], samples.shape[-2]),
-                )
                 output_path = video_path
 
                 samples = embed_watermark(samples)
@@ -221,9 +238,16 @@ class Predictor(BasePredictor):
                     .numpy()
                     .astype(np.uint8)
                 )
-                for frame in vid:
+                # Save frames as individual images
+                for i, frame in enumerate(vid):
                     frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    writer.write(frame)
-                writer.release()
+                    cv2.imwrite(os.path.join(output_folder, f"frame_{i:06d}.png"), frame)
+
+                # Use ffmpeg to create video from images
+                os.system(f"ffmpeg -r {fps_id + 1} -i {output_folder}/frame_%06d.png -vcodec mpeg4 {video_path}")
+
+                # Remove individual frame images
+                for file_name in glob(os.path.join(output_folder, "*.png")):
+                    os.remove(file_name)
 
         return Path(output_path)
