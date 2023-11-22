@@ -16,6 +16,7 @@ from torchvision.transforms import ToTensor
 from sgm.inference.helpers import embed_watermark
 from sgm.util import default, instantiate_from_config
 from sizing_strategy import SizingStrategy
+from weights_downloader import WeightsDownloader
 
 """Exported from stability/ai generative-models """
 
@@ -89,11 +90,22 @@ def load_model(
 
     return model
 
+SVD_MODEL_CACHE = "./checkpoints"
+SVD_URL = "https://weights.replicate.delivery/default/svd/svd_and_svd_xt.tar"
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
         """Load the model into memory to make running multiple predictions efficient"""
         self.sizing_strategy = SizingStrategy()
+        WeightsDownloader.download_if_not_exists(SVD_URL, SVD_MODEL_CACHE)
+
+        self.model = load_model(
+            "svd.yaml",
+            "cuda",
+            14,
+            25,
+        )
+
         # self.model = torch.load("./weights.pth")
         # TODO: cache & download open_clip_pytorch_model.bin here
 
@@ -136,15 +148,18 @@ class Predictor(BasePredictor):
         )
 
         device = "cuda"
-        model_config = "svd.yaml"
         print("Set consts")
 
-        model = load_model(
-            model_config,
-            device,
-            num_frames,
-            num_steps,
-        )
+        if num_frames != 14 or num_steps != 25:
+            model = load_model(
+                "svd.yaml",
+                "cuda",
+                num_frames,
+                num_steps,
+            )
+        else:
+            model = self.model
+
         print("Loaded model")
         torch.manual_seed(seed)
 

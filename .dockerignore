@@ -2,6 +2,8 @@
 #
 # https://docs.docker.com/engine/reference/builder/#dockerignore-file
 
+checkpoints/
+
 # Exclude Git files
 .git
 .github
