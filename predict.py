@@ -25,26 +25,25 @@ def get_unique_embedder_keys_from_conditioner(conditioner):
     return list(set([x.input_key for x in conditioner.embedders]))
 
 
-def get_batch(keys, value_dict, N, T, device):
+def get_batch(keys, value_dict, N, T, device, dtype=None):
     batch = {}
     batch_uc = {}
-
     for key in keys:
         if key == "fps_id":
             batch[key] = (
                 torch.tensor([value_dict["fps_id"]])
-                .to(device)
+                .to(device, dtype=dtype)
                 .repeat(int(math.prod(N)))
             )
         elif key == "motion_bucket_id":
             batch[key] = (
                 torch.tensor([value_dict["motion_bucket_id"]])
-                .to(device)
+                .to(device, dtype=dtype)
                 .repeat(int(math.prod(N)))
             )
         elif key == "cond_aug":
             batch[key] = repeat(
-                torch.tensor([value_dict["cond_aug"]]).to(device),
+                torch.tensor([value_dict["cond_aug"]]).to(device, dtype=dtype),
                 "1 -> b",
                 b=math.prod(N),
             )
@@ -59,7 +58,6 @@ def get_batch(keys, value_dict, N, T, device):
 
     if T is not None:
         batch["num_video_frames"] = T
-
     for key in batch.keys():
         if key not in batch_uc and isinstance(batch[key], torch.Tensor):
             batch_uc[key] = torch.clone(batch[key])
@@ -84,13 +82,16 @@ def load_model(
     )
     if device == "cuda":
         with torch.device(device):
-            model = instantiate_from_config(config.model).to(device)
+            model = instantiate_from_config(config.model).to(device).eval().requires_grad_(False)
     else:
-        model = instantiate_from_config(config.model).to(device)
+        model = instantiate_from_config(config.model).to(device).eval()
 
     # FP16
-    model.model.half()
-    model.eval()
+    model.conditioner.cpu()
+    model.first_stage_model.cpu()
+    model.model.to(dtype=torch.float16)
+    torch.cuda.empty_cache()
+    model = model.requires_grad_(False)
     return model
 
 
@@ -150,7 +151,7 @@ class Predictor(BasePredictor):
             description="Increase overall motion in the generated video", default=127, ge=1, le=255
         ),
         cond_aug: float = Input(description="Amount of noise to add to input image", default=0.02),
-        decoding_t: int = Input(description="Number of frames to decode at a time", default=7),
+        decoding_t: int = Input(description="Number of frames to decode at a time", default=14),
         seed: int = Input(
             description="Random seed. Leave blank to randomize the seed", default=None
         ),
@@ -165,6 +166,7 @@ class Predictor(BasePredictor):
         if seed is None:
             seed = int.from_bytes(os.urandom(2), "big")
         print(f"Using seed: {seed}")
+        torch.manual_seed(seed)
 
         image = self.sizing_strategy.apply(sizing_strategy, input_image)
 
@@ -179,7 +181,6 @@ class Predictor(BasePredictor):
             num_frames = SVD_XT_DEFAULT_FRAMES
 
         print("Loaded model")
-        torch.manual_seed(seed)
 
         output_path = None
 
@@ -217,8 +218,15 @@ class Predictor(BasePredictor):
         value_dict["cond_frames"] = image + cond_aug * torch.randn_like(image)
         value_dict["cond_aug"] = cond_aug
 
+        # low vram mode
+        model.conditioner.cpu()
+        model.first_stage_model.cpu()
+        torch.cuda.empty_cache()
+        model.sampler.verbose = True
+
         with torch.no_grad():
             with torch.autocast(device):
+                model.conditioner.to(device)
                 batch, batch_uc = get_batch(
                     get_unique_embedder_keys_from_conditioner(model.conditioner),
                     value_dict,
@@ -234,20 +242,27 @@ class Predictor(BasePredictor):
                         "cond_frames_without_noise",
                     ],
                 )
+                model.conditioner.cpu()
+                torch.cuda.empty_cache()
 
+                # from here, dtype is fp16
                 for k in ["crossattn", "concat"]:
                     uc[k] = repeat(uc[k], "b ... -> b t ...", t=num_frames)
                     uc[k] = rearrange(uc[k], "b t ... -> (b t) ...", t=num_frames)
                     c[k] = repeat(c[k], "b ... -> b t ...", t=num_frames)
                     c[k] = rearrange(c[k], "b t ... -> (b t) ...", t=num_frames)
+                for k in uc.keys():
+                    uc[k] = uc[k].to(dtype=torch.float16)
+                    c[k] = c[k].to(dtype=torch.float16)
 
-                randn = torch.randn(shape, device=device)
-
+                randn = torch.randn(shape, device=device, dtype=torch.float16)
                 additional_model_inputs = {}
-                additional_model_inputs["image_only_indicator"] = torch.zeros(
-                    2, num_frames
-                ).to(device)
+                additional_model_inputs["image_only_indicator"] = torch.zeros(2, num_frames).to(device)
                 additional_model_inputs["num_video_frames"] = batch["num_video_frames"]
+
+                for k in additional_model_inputs:
+                    if isinstance(additional_model_inputs[k], torch.Tensor):
+                        additional_model_inputs[k] = additional_model_inputs[k].to(dtype=torch.float16)
 
                 def denoiser(input, sigma, c):
                     return model.denoiser(
@@ -255,9 +270,13 @@ class Predictor(BasePredictor):
                     )
 
                 samples_z = model.sampler(denoiser, randn, cond=c, uc=uc)
+                samples_z.to(dtype=model.first_stage_model.dtype)
                 model.en_and_decode_n_samples_a_time = decoding_t
+                model.first_stage_model.to(device)
                 samples_x = model.decode_first_stage(samples_z)
                 samples = torch.clamp((samples_x + 1.0) / 2.0, min=0.0, max=1.0)
+                model.first_stage_model.cpu()
+                torch.cuda.empty_cache()
 
                 os.makedirs(output_folder, exist_ok=True)
                 base_count = len(glob(os.path.join(output_folder, "*.mp4")))
