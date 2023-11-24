@@ -1,6 +1,7 @@
 # Configuration for Cog ⚙️
 # Reference: https://github.com/replicate/cog/blob/main/docs/yaml.md
 build:
+  cuda: "11.2.2"
   gpu: true
   system_packages:
     - "libgl1-mesa-glx"
