@@ -8,11 +8,7 @@ Follow the [model pushing guide](https://replicate.com/docs/guides/push-a-model)
 
 ## Basic Usage
 
-First download the checkpoint:
-
-    cog run script/download-weights
-
-Then run aprediction:
+Run a prediction:
 
     cog predict -i input_image=@demo.png
 
